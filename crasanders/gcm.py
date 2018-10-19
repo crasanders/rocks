@@ -96,31 +96,4 @@ class GCM_Sup(GCM):
         X_t[X < ref] = ref - (ref - X_t[X < ref]) ** self.w
         return X_t
 
-class GCM_Sigmoid(GCM):
-    def __init__(self, n_categories, n_dimensions, n_exemplars, exemplars, strengths, c=1, gamma=1, g=0, r=2, q=1,
-                 biases=None, weights=None, supp=0, K=None, refs=None):
-        super().__init__(n_categories, n_dimensions, n_exemplars, exemplars, strengths, c, gamma, g, r, q,
-                 biases, weights)
-        self.supp = supp
 
-        if refs is None:
-            self.refs = np.zeros(self.n_dimensions - self.supp)
-        else:
-            self.refs = refs
-
-        if K is None:
-            self.K = np.ones(self.n_dimensions - self.supp)
-        else:
-            self.K = K
-
-        for j, i in enumerate(range(self.supp, self.n_dimensions)):
-            self.exemplars[:,i] = self.transform(self.exemplars[:,i], self.refs[j], self.K[j])
-
-    def predict(self, X):
-        X_t = X.copy().astype(float)
-        for j, i in enumerate(range(self.supp, self.n_dimensions)):
-            X_t[:,i] = self.transform(X[:,i], self.refs[j], self.K[j])
-        return super().predict(X_t)
-
-    def transform(self, X, ref, k):
-        return 1 / (1 + np.exp(-k * (X - ref)))
