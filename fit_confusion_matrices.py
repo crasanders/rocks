@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.optimize import basinhopping
 from os.path import join
-from crasanders.gcm import GCM, GCM_Sup
+from crasanders.gcm import GCM, GCM_Sup, GCM_Sigmoid
 import pickle
 
 data_dir = 'data'
@@ -18,8 +18,8 @@ representations = {
     'mds_sup': np.loadtxt(join(data_dir, 'mds_120_supplemental_dims.txt')),
     'cnn_base': np.loadtxt(join(data_dir, 'cnn_120.txt')),
     'cnn_sup': np.hstack((np.loadtxt(join(data_dir, 'cnn_120.txt')), np.loadtxt(join(data_dir, '120_predictions_supplemental_dims.txt'))[:, -5:])),
-    'resnet': np.loadtxt(join(data_dir, 'resnet50_features_120.txt')),
-    'resnet_transf': np.loadtxt(join(data_dir, 'resnet50_transformed_120.txt')),
+    # 'resnet': np.loadtxt(join(data_dir, 'resnet50_features_120.txt')),
+    # 'resnet_transf': np.loadtxt(join(data_dir, 'resnet50_transformed_120.txt')),
     # 'pixel': np.loadtxt(join(data_dir, 'pixel_120.txt')) / 255
 }
 
@@ -70,53 +70,50 @@ def fit_c_sup(parms, args):
 
     return -fit
 
-# def fit_biases(parms, rep):
-#     nweights = representations[rep].shape[1]
-#     fit = 0
-#     offset = 1
-#     for cond in conditions:
-#         gcm = GCM(nbiases, nweights, 20, exemplars[rep][cond], strengths, c=parms[0],
-#                   biases=parms[offset:nbiases+offset], r=2)
-#         fit += gcm.log_likelihood(stim[rep][cond], cm[cond])
-#         offset += nbiases
-#     return -fit
-#
-# def fit_weights(parms, rep):
-#     nweights = representations[rep].shape[1]
-#     fit = 0
-#     offset = 1
-#     for cond in conditions:
-#         gcm = GCM(nbiases, nweights, 20, exemplars[rep][cond], strengths, c=parms[0],
-#                   weights=parms[offset:nweights+offset], r=2)
-#         fit += gcm.log_likelihood(stim[rep][cond], cm[cond])
-#         offset += nweights
-#     return -fit
-#
-# def fit_full(parms, rep):
-#     nweights = representations[rep].shape[1]
-#     fit = 0
-#     offset1 = 1
-#     offset2 = nbiases * nconditions + 1
-#     for cond in conditions:
-#         gcm = GCM(nbiases, nweights, 20, exemplars[rep][cond], strengths, c=parms[0],
-#                   biases=parms[offset1:nbiases+offset1], weights=parms[offset2:nweights+offset2])
-#         fit += gcm.log_likelihood(stim[rep][cond], cm[cond], include_factorial=False)
-#         offset1 += nbiases
-#         offset2 += nweights
-#     return -fit
+def fit_c_sigmoid(parms, args):
+    rep, factorial = args
+    nweights = representations[rep].shape[1]
+    fit = 0
+    for cond in conditions:
+        gcm = GCM_Sigmoid(nbiases, nweights, 20, exemplars[rep][cond], strengths, c=parms[0],
+                      supp=start_sup, L=parms[1], K=parms[2:7], refs=parms[7:])
+        fit += gcm.log_likelihood(stim[rep][cond], cm[cond], include_factorial=factorial)
+
+    return -fit
+
+
+def fit_full_sigmoid(parms, args):
+    rep, fitted = args
+    nweights = representations[rep].shape[1]
+    fit = 0
+    offset1 = 1
+    offset2 = nbiases * nconditions + 1
+    predictions = []
+    for cond in conditions:
+        gcm = GCM(nbiases, nweights, 20, exemplars[rep][cond], strengths, c=parms[0],
+                  biases=parms[offset1:nbiases+offset1], weights=parms[offset2:nweights+offset2])
+        fit += gcm.log_likelihood(stim[rep][cond], cm[cond], include_factorial=fitted)
+        predictions.append(gcm.predict(stim[rep][cond]))
+        offset1 += nbiases
+        offset2 += nweights
+    if not fitted:
+        return -fit
+    else:
+        return [-fit, predictions]
 
 fits = {}
 for rep in representations:
     print(rep)
 
-    # if '_sup' in rep:
-    #     parm = [1,1,1,1,0,0,0,0,0]
-    #     fit = basinhopping(fit_c_sup, parm, minimizer_kwargs={'args':[rep, False]})
-    #     fit.n_log_lik = fit_c_sup(fit.x, args=[rep, True])
-
-    parm = [1]
-    fit = basinhopping(fit_c, parm, minimizer_kwargs={'args':[rep, False]})
-    fit.n_log_lik = fit_c(fit.x, args=[rep, True])
+    if '_sup' in rep:
+        parm = [1,1,1,1,1,1,1,0,0,0,0,0]
+        fit = basinhopping(fit_c_sigmoid, parm, minimizer_kwargs={'args':[rep, False]})
+        fit.n_log_lik = fit_c_sigmoid(fit.x, args=[rep, True])
+    else:
+        continue
+    #     parm = [1]
+    #     fit = basinhopping(fit_c, parm, minimizer_kwargs={'args':[rep, False]})
+    #     fit.n_log_lik = fit_c(fit.x, args=[rep, True])
 
     fit.free_parm = len(parm)
     fit.bic = 2*fit.n_log_lik + fit.free_parm * logn
@@ -130,5 +127,5 @@ for rep in representations:
     print(rep)
     fit = fits[rep]
     print('-ln(L):', fit.n_log_lik, 'BIC:', fit.bic)
-    print('parameters:', fit.x)
+    # print('parameters:', fit.x)
     print()

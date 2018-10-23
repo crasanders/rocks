@@ -96,4 +96,26 @@ class GCM_Sup(GCM):
         X_t[X < ref] = ref - (ref - X_t[X < ref]) ** self.w
         return X_t
 
+class GCM_cw(GCM):
+    def predict(self, X, categories):
+        probabilities = np.zeros((len(X), self.n_categories))
+        for i, x in enumerate(X):
+            distances = ((np.abs(self.exemplars - x) ** self.r) @ self.weights) ** (1 / self.r)
+            for j, d in enumerate(distances):
+                if categories[i] == np.argmax(self.strengths[j]):
+                    distances[j] = -self.c[0] * d ** self.q
+                else:
+                    distances[j] = -self.c[1] * d ** self.q
+            similarities = np.exp(distances)
+            probs = self.biases * (similarities.T @ self.strengths)
+            if np.sum(probs) != 0:
+                probs /= np.sum(probs)
+            else:
+                probs += (1 / self.n_categories)
+            probs = (1 - self.g) * probs + self.g * (1 / self.n_categories)
+            probabilities[i, :] = probs
+        return probabilities
 
+    def score(self, X, y):
+        pred = self.predict(X, y)
+        return np.array([x[y[i]] for i, x in enumerate(pred)])
