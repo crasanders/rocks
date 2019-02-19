@@ -1,9 +1,9 @@
 import numpy as np
-from hyperopt import fmin, tpe, hp, STATUS_OK, STATUS_FAIL, Trials
-from os.path import join
+# from hyperopt import fmin, tpe, hp, STATUS_OK, STATUS_FAIL, Trials
+from scipy.optimize import minimize, basinhopping
 from crasanders.gcm import GCM_Sup
-from scipy.optimize import minimize
 import pickle
+from os.path import join
 
 data_dir = 'data'
 nbiases = 10
@@ -46,44 +46,66 @@ for rep in representations:
         stim[rep][cond] = representations[rep][np.isin(cats, categories[cond]), :]
         exemplars[rep][cond] = representations[rep][np.logical_and(training, np.isin(cats, categories[cond])), :]
 
-def fit_gcm(space):
+def fit_gcm(space, args):
+    rep, fitted = args
     fit = 0
     predictions = []
     for cond in conditions:
         nweights = exemplars[rep][cond].shape[1]
 
-        weights = np.array([1]*nMDS + [space['weight_{}'.format(i)] for i in range(nSup)])
+        weights = np.array([1]*nMDS + list(space[10:]))
 
-        gcm = GCM_Sup(nbiases, nweights, 20, exemplars[rep][cond], strengths, c=space['c'], weights=weights,
-                      supp=startsup, u=space['u'], v=space['v'], w=space['w'], refs=[space['ref_{}'.format(i)] for i in range(nSup)])
-        fit -= gcm.log_likelihood(stim[rep][cond], cm[cond], include_factorial=True)
+        gcm = GCM_Sup(nbiases, nweights, 20, exemplars[rep][cond], strengths, c=space[0], gamma=space[1], weights=weights,
+                      supp=startsup, u=space[2], v=space[3], w=space[4], refs=space[5:10])
+        fit -= gcm.log_likelihood(stim[rep][cond], cm[cond], include_factorial=fitted)
         predictions.append(gcm.predict(stim[rep][cond]))
-        free_parm = len(space)
-        bic = 2 * fit + free_parm * logn
 
-        if np.isnan(fit) or np.any(np.isnan(predictions)):
-            status = STATUS_FAIL
-        else:
-            status = STATUS_OK
+    if np.isnan(fit):
+        return np.inf
 
-    return {'loss': fit, 'status': status, 'predictions': predictions, 'free parameters': free_parm, 'bic': bic}
+    if not fitted:
+        return fit
+    else:
+        return [fit, predictions]
 
-space = {'c': hp.loguniform('c', -1, 2),
-         'u': hp.uniform('u', 0, 10), 'v': hp.uniform('v', -3, 3), 'w': hp.uniform('w', -3, 3)}
-for i in range(nSup):
-    space['ref_{}'.format(i)] = hp.uniform('ref_{}'.format(i), -4, 4)
-    space['weight_{}'.format(i)] = hp.loguniform('weight_{}'.format(i), -2, 2)
-    #for cond in conditions:
-     #   space['weight_{}_{}'.format(cond, i)] = hp.loguniform('weight_{}_{}'.format(cond, i), -5, 5)
+    return fit
 
+
+class MyBounds(object):
+    def __init__(self,
+                 xmax=[np.inf, np.inf, np.inf, np.inf, np.inf,
+                       5,5,5,5,5,
+                       np.inf, np.inf, np.inf, np.inf, np.inf],
+                 xmin=[0,0,0,0,0,
+                       -5,-5,-5,-5,-5,
+                       0,0,0,0,0]):
+        self.xmax = np.array(xmax)
+        self.xmin = np.array(xmin)
+    def __call__(self, **kwargs):
+        x = kwargs["x_new"]
+        tmax = bool(np.all(x <= self.xmax))
+        tmin = bool(np.all(x >= self.xmin))
+        return tmax and tmin
+
+fits = {}
+for rep in representations:
+    print('fitting:', rep)
+    if rep == 'mds_sup':
+        parm = [.88, 1.1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+    if rep == 'cnn_sup':
+        parm = [.88, 1., 1.94, -.14, .52, -2.6, -1.62, 2.23, -2.39, 1.86, .53, 1.74, 4.3, .48, 5.03]
+    fit = basinhopping(fit_gcm, parm, minimizer_kwargs={'args':[rep, False]}, accept_test=MyBounds())
+    fit.n_log_lik, fit.predictions = fit_gcm(fit.x, args=[rep, True])
+    fit.free_parm = len(parm)
+    fit.bic = 2*fit.n_log_lik + fit.free_parm * logn
+    fits[rep] = fit
 
 for rep in representations:
-    trials = Trials()
-    best = fmin(fn=fit_gcm, space=space, algo=tpe.suggest, max_evals=100000, trials=trials)
-    results = trials.best_trial['result']
-    results['parms'] = best
-    fits[rep] = results
-    print(rep, results['loss'], results['bic'])
+    print(rep)
+    fit = fits[rep]
+    print('free parms:', fit.free_parm, '-ln(L):', fit.n_log_lik, 'BIC:', fit.bic)
+    print()
 
-with open(join(data_dir, 'gcm_fits_supplemental_dims_1.pkl'), 'wb') as f:
+with open(join(data_dir, 'best_fits_supplemental.pkl'), 'wb') as f:
     pickle.dump(fits, f)
+
